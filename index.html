@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>個人財務管家 - GitHub Pages 版</title>
+    <title>個人財務管家 - 本地持久化版</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -13,11 +13,6 @@
     
     <!-- Babel Standalone: 用於在瀏覽器中即時轉譯 JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Firebase SDK (兼容模式) -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -35,41 +30,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // --- Firebase 初始化邏輯 ---
-        let firebaseConfig = null;
-
-        // 1. 嘗試讀取系統環境配置 (預覽環境用)
-        try {
-            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-                firebaseConfig = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) : __firebase_config;
-            }
-        } catch(e) {
-            console.warn("系統配置讀取失敗");
-        }
-
-        /* !!! 手動設定區 (GitHub.io 部署必填) !!!
-           請前往 Firebase Console 取得以下資訊並填入，然後取消下方註解：
-
-           firebaseConfig = {
-             apiKey: "你的_API_KEY",
-             authDomain: "你的_PROJECT_ID.firebaseapp.com",
-             projectId: "你的_PROJECT_ID",
-             storageBucket: "你的_PROJECT_ID.appspot.com",
-             messagingSenderId: "你的_SENDER_ID",
-             appId: "你的_APP_ID"
-           };
-        */
-
-        // 如果 config 已設定，則啟動 Firebase
-        if (firebaseConfig) {
-            firebase.initializeApp(firebaseConfig);
-        }
-
-        const auth = firebaseConfig ? firebase.auth() : null;
-        const db = firebaseConfig ? firebase.firestore() : null;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-finance-tracker';
-
-        // 圖示組件：修正後的 Lucide 渲染方式
+        // 圖標組件：使用 Lucide 的渲染方式
         const Icon = ({ name, className = "w-5 h-5" }) => {
             const iconRef = useRef(null);
             useEffect(() => {
@@ -88,49 +49,46 @@
         };
 
         const App = () => {
-            const [user, setUser] = useState(null);
-            const [transactions, setTransactions] = useState([]);
-            const [installments, setInstallments] = useState([]);
-            const [activeTab, setActiveTab] = useState('dashboard');
-            const [isConfigMissing, setIsConfigMissing] = useState(!firebaseConfig);
+            // 從 localStorage 初始化資料，如果沒有資料則回傳空陣列
+            const [transactions, setTransactions] = useState(() => {
+                const saved = localStorage.getItem('finance_transactions');
+                return saved ? JSON.parse(saved) : [];
+            });
             
+            const [installments, setInstallments] = useState(() => {
+                const saved = localStorage.getItem('finance_installments');
+                return saved ? JSON.parse(saved) : [];
+            });
+
+            const [activeTab, setActiveTab] = useState('dashboard');
             const [showTransModal, setShowTransModal] = useState(false);
             const [showInstModal, setShowInstModal] = useState(false);
-            const [newTrans, setNewTrans] = useState({ type: 'expense', amount: '', category: '餐飲', note: '', date: new Date().toISOString().split('T')[0] });
-            const [newInst, setNewInst] = useState({ name: '', totalAmount: '', monthlyAmount: '', totalPeriods: '', remainingPeriods: '', startDate: new Date().toISOString().split('T')[0] });
+            
+            const [newTrans, setNewTrans] = useState({ 
+                type: 'expense', 
+                amount: '', 
+                category: '餐飲', 
+                note: '', 
+                date: new Date().toISOString().split('T')[0] 
+            });
+            
+            const [newInst, setNewInst] = useState({ 
+                name: '', 
+                totalAmount: '', 
+                monthlyAmount: '', 
+                totalPeriods: '', 
+                remainingPeriods: '', 
+                startDate: new Date().toISOString().split('T')[0] 
+            });
 
-            // 1. 登入
+            // 當資料變動時，自動儲存到 localStorage
             useEffect(() => {
-                if (!auth) return;
-                const unsubscribe = auth.onAuthStateChanged((u) => {
-                    if (u) {
-                        setUser(u);
-                    } else {
-                        // 嘗試自動登入
-                        auth.signInAnonymously().catch(e => console.error("登入失敗", e));
-                    }
-                });
-                return () => unsubscribe();
-            }, []);
+                localStorage.setItem('finance_transactions', JSON.stringify(transactions));
+            }, [transactions]);
 
-            // 2. 監聽資料
             useEffect(() => {
-                if (!user || !db) return;
-
-                const userRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid);
-                
-                const unsubTrans = userRef.collection('transactions').onSnapshot(snap => {
-                    const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setTransactions(data.sort((a, b) => new Date(b.date) - new Date(a.date)));
-                });
-
-                const unsubInst = userRef.collection('installments').onSnapshot(snap => {
-                    const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setInstallments(data);
-                });
-
-                return () => { unsubTrans(); unsubInst(); };
-            }, [user]);
+                localStorage.setItem('finance_installments', JSON.stringify(installments));
+            }, [installments]);
 
             // 計算統計數據
             const stats = useMemo(() => {
@@ -146,108 +104,160 @@
                 const income = monthly.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
                 const expense = monthly.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
                 const savings = monthly.filter(t => t.type === 'savings').reduce((s, t) => s + Number(t.amount), 0);
-                const instPay = installments.reduce((s, i) => s + Number(i.monthlyAmount), 0);
-                const debt = installments.reduce((s, i) => s + (Number(i.monthlyAmount) * Number(i.remainingPeriods)), 0);
+                const instPay = installments.reduce((s, i) => s + (Number(i.remainingPeriods) > 0 ? Number(i.monthlyAmount) : 0), 0); // 這裡改為概算每月應繳
+                
+                // 更精確的「剩餘總債務」
+                const totalDebt = installments.reduce((s, i) => s + (Number(i.monthlyAmount) * Number(i.remainingPeriods)), 0);
+                
+                // 本月實際已繳分期（從交易紀錄中抓取本月標記為「分期還款」的支出）
+                const actualInstPaidThisMonth = monthly.filter(t => t.category === '分期還款').reduce((s, t) => s + Number(t.amount), 0);
 
-                return { income, expense, savings, instPay, debt, budget: income - expense - savings - instPay };
+                return { 
+                    income, 
+                    expense, 
+                    savings, 
+                    totalDebt,
+                    budget: income - expense - savings 
+                };
             }, [transactions, installments]);
 
-            const handleAddTrans = async (e) => {
+            // 新增交易
+            const handleAddTrans = (e) => {
                 e.preventDefault();
-                if (!db || !user) return;
-                await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('transactions').add({
-                    ...newTrans, amount: Number(newTrans.amount), createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
+                if (!newTrans.amount) return;
+                
+                const newEntry = {
+                    ...newTrans,
+                    id: Date.now().toString(),
+                    amount: Number(newTrans.amount),
+                    createdAt: new Date().toISOString()
+                };
+                
+                setTransactions(prev => [newEntry, ...prev]);
                 setShowTransModal(false);
                 setNewTrans({ ...newTrans, amount: '', note: '' });
             };
 
-            const payInst = async (inst) => {
-                const batch = db.batch();
-                const userRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid);
+            // 新增分期項目
+            const handleAddInst = (e) => {
+                e.preventDefault();
+                const newEntry = {
+                    ...newInst,
+                    id: Date.now().toString(),
+                    totalAmount: Number(newInst.totalAmount),
+                    monthlyAmount: Number(newInst.monthlyAmount),
+                    totalPeriods: Number(newInst.totalPeriods),
+                    remainingPeriods: Number(newInst.remainingPeriods),
+                    createdAt: new Date().toISOString()
+                };
                 
-                batch.set(userRef.collection('transactions').doc(), {
-                    type: 'expense', amount: inst.monthlyAmount, category: '分期還款', note: `分期: ${inst.name}`,
-                    date: new Date().toISOString().split('T')[0], createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-                batch.update(userRef.collection('installments').doc(inst.id), { remainingPeriods: inst.remainingPeriods - 1 });
-                await batch.commit();
+                setInstallments(prev => [...prev, newEntry]);
+                setShowInstModal(false);
             };
 
-            if (isConfigMissing) {
-                return (
-                    <div className="flex h-screen items-center justify-center p-8 bg-indigo-50">
-                        <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl max-w-sm text-center">
-                            <Icon name="AlertCircle" className="w-16 h-16 text-red-500 mx-auto mb-6" />
-                            <h2 className="text-2xl font-black mb-4">尚未設定 Firebase</h2>
-                            <p className="text-gray-500 text-sm mb-6 leading-relaxed">請在 index.html 檔案中找到「手動設定區」，填入您的專屬 Firebase Config 物件以啟用資料儲存功能。</p>
-                        </div>
-                    </div>
-                );
-            }
+            // 繳納分期
+            const payInst = (inst) => {
+                if (inst.remainingPeriods <= 0) return;
+                
+                const newTransEntry = {
+                    id: `inst-pay-${Date.now()}`,
+                    type: 'expense',
+                    amount: inst.monthlyAmount,
+                    category: '分期還款',
+                    note: `繳納分期: ${inst.name}`,
+                    date: new Date().toISOString().split('T')[0],
+                    createdAt: new Date().toISOString()
+                };
+                
+                setTransactions(prev => [newTransEntry, ...prev]);
+                setInstallments(prev => prev.map(item => 
+                    item.id === inst.id 
+                    ? { ...item, remainingPeriods: item.remainingPeriods - 1 }
+                    : item
+                ));
+            };
 
-            if (!user) return (
-                <div className="flex h-screen items-center justify-center flex-col gap-4">
-                    <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                    <p className="text-indigo-600 font-bold tracking-widest">連線資料庫中...</p>
-                </div>
-            );
+            const handleDeleteTrans = (id) => {
+                if(confirm('確定要刪除此筆紀錄嗎？')) {
+                    setTransactions(prev => prev.filter(t => t.id !== id));
+                }
+            };
+
+            const handleDeleteInst = (id) => {
+                if(confirm('確定要刪除此分期項目嗎？')) {
+                    setInstallments(prev => prev.filter(i => i.id !== id));
+                }
+            };
 
             return (
                 <div className="min-h-screen pb-24 bg-gray-50">
-                    <nav className="bg-white/80 backdrop-blur-md border-b px-6 py-4 sticky top-0 z-10 flex justify-between items-center">
+                    <nav className="bg-white/80 backdrop-blur-md border-b px-6 py-4 sticky top-0 z-10 flex justify-between items-center shadow-sm">
                         <div className="flex items-center gap-2">
-                            <div className="bg-indigo-600 p-2 rounded-xl text-white"><Icon name="Wallet" /></div>
+                            <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg shadow-indigo-100"><Icon name="Wallet" /></div>
                             <h1 className="text-xl font-black text-indigo-900">財務管家</h1>
                         </div>
-                        <span className="text-[10px] font-mono text-gray-400">UID: {user.uid.slice(0,6)}</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded-full border border-green-100 uppercase">自動儲存已啟動</span>
+                        </div>
                     </nav>
 
                     <main className="max-w-4xl mx-auto p-4 space-y-6 animate-in">
                         {activeTab === 'dashboard' && (
                             <div className="space-y-6">
-                                <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-8 rounded-[2.5rem] text-white shadow-2xl">
+                                {/* 核心卡片 */}
+                                <div className="bg-gradient-to-br from-indigo-600 via-indigo-700 to-blue-700 p-8 rounded-[2.5rem] text-white shadow-2xl shadow-indigo-200">
                                     <div className="flex justify-between mb-6">
                                         <div>
                                             <p className="text-xs font-bold opacity-70 mb-1 uppercase tracking-widest">本月可用預算</p>
-                                            <h2 className="text-4xl font-black">${stats.budget.toLocaleString()}</h2>
+                                            <h2 className="text-4xl font-black tracking-tight">${stats.budget.toLocaleString()}</h2>
                                         </div>
                                         <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-md"><Icon name="PieChart" className="w-6 h-6" /></div>
                                     </div>
                                     <div className="grid grid-cols-3 gap-2 border-t border-white/20 pt-6 text-sm">
-                                        <div><p className="opacity-60 text-[10px] font-bold">收入</p><p className="font-bold">+{stats.income.toLocaleString()}</p></div>
-                                        <div><p className="opacity-60 text-[10px] font-bold">支出</p><p className="font-bold">-${(stats.expense + stats.instPay).toLocaleString()}</p></div>
-                                        <div><p className="opacity-60 text-[10px] font-bold">儲蓄</p><p className="font-bold">${stats.savings.toLocaleString()}</p></div>
+                                        <div><p className="opacity-60 text-[10px] font-bold mb-1">收入</p><p className="font-bold">+{stats.income.toLocaleString()}</p></div>
+                                        <div><p className="opacity-60 text-[10px] font-bold mb-1">支出</p><p className="font-bold">-${stats.expense.toLocaleString()}</p></div>
+                                        <div><p className="opacity-60 text-[10px] font-bold mb-1">存款</p><p className="font-bold">${stats.savings.toLocaleString()}</p></div>
                                     </div>
                                 </div>
 
+                                {/* 輔助卡片 */}
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="bg-white p-5 rounded-3xl shadow-sm flex items-center gap-3 border border-gray-100">
                                         <div className="bg-green-50 p-3 rounded-2xl text-green-600"><Icon name="PiggyBank" /></div>
-                                        <div><p className="text-[10px] text-gray-400 font-bold">本月儲存</p><h3 className="text-lg font-black">${stats.savings.toLocaleString()}</h3></div>
+                                        <div><p className="text-[10px] text-gray-400 font-bold uppercase">本月儲存</p><h3 className="text-lg font-black text-gray-800">${stats.savings.toLocaleString()}</h3></div>
                                     </div>
                                     <div className="bg-white p-5 rounded-3xl shadow-sm flex items-center gap-3 border border-gray-100">
                                         <div className="bg-orange-50 p-3 rounded-2xl text-orange-600"><Icon name="CreditCard" /></div>
-                                        <div><p className="text-[10px] text-gray-400 font-bold">分期欠款</p><h3 className="text-lg font-black">${stats.debt.toLocaleString()}</h3></div>
+                                        <div><p className="text-[10px] text-gray-400 font-bold uppercase">總債務額</p><h3 className="text-lg font-black text-gray-800">${stats.totalDebt.toLocaleString()}</h3></div>
                                     </div>
                                 </div>
 
+                                {/* 最近動態 */}
                                 <div className="space-y-4">
-                                    <h3 className="font-black text-gray-800 px-2">最近動態</h3>
+                                    <div className="flex justify-between items-center px-2">
+                                        <h3 className="font-black text-gray-800">最近交易</h3>
+                                        <button onClick={()=>setActiveTab('transactions')} className="text-xs font-bold text-indigo-600">查看明細</button>
+                                    </div>
                                     <div className="bg-white rounded-[2rem] shadow-sm divide-y divide-gray-50 overflow-hidden border border-gray-100">
-                                        {transactions.slice(0,5).map(t => (
-                                            <div key={t.id} className="flex items-center justify-between p-4">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`p-2 rounded-xl ${t.type === 'income' ? 'bg-green-100 text-green-600' : t.type === 'savings' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}`}>
-                                                        <Icon name={t.type === 'income' ? 'TrendingUp' : t.type === 'savings' ? 'PiggyBank' : 'TrendingDown'} className="w-4 h-4" />
-                                                    </div>
-                                                    <div><p className="font-bold text-sm">{t.note || t.category}</p><p className="text-[10px] text-gray-400">{t.date}</p></div>
-                                                </div>
-                                                <span className={`font-black text-sm ${t.type === 'income' ? 'text-green-600' : t.type === 'savings' ? 'text-blue-600' : 'text-gray-800'}`}>
-                                                    {t.type === 'income' ? '+' : '-'}${t.amount.toLocaleString()}
-                                                </span>
+                                        {transactions.length === 0 ? (
+                                            <div className="p-12 text-center">
+                                                <p className="text-gray-400 text-sm">目前沒有任何紀錄，快去點擊下方的「＋」吧！</p>
                                             </div>
-                                        ))}
+                                        ) : (
+                                            transactions.slice(0,5).map(t => (
+                                                <div key={t.id} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`p-2 rounded-xl ${t.type === 'income' ? 'bg-green-100 text-green-600' : t.type === 'savings' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}`}>
+                                                            <Icon name={t.type === 'income' ? 'TrendingUp' : t.type === 'savings' ? 'PiggyBank' : 'TrendingDown'} className="w-4 h-4" />
+                                                        </div>
+                                                        <div><p className="font-bold text-sm text-gray-800">{t.note || t.category}</p><p className="text-[10px] text-gray-400 font-medium">{t.date}</p></div>
+                                                    </div>
+                                                    <span className={`font-black text-sm ${t.type === 'income' ? 'text-green-600' : t.type === 'savings' ? 'text-blue-600' : 'text-gray-800'}`}>
+                                                        {t.type === 'income' ? '+' : '-'}${t.amount.toLocaleString()}
+                                                    </span>
+                                                </div>
+                                            ))
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -255,17 +265,17 @@
 
                         {activeTab === 'transactions' && (
                             <div className="animate-in space-y-4">
-                                <h3 className="font-black text-xl px-2">所有明細</h3>
-                                <div className="bg-white rounded-[2rem] shadow-sm divide-y divide-gray-50 border border-gray-100">
-                                    {transactions.map(t => (
-                                        <div key={t.id} className="flex items-center justify-between p-5 group">
+                                <h3 className="font-black text-xl px-2">收支詳細清單</h3>
+                                <div className="bg-white rounded-[2rem] shadow-sm divide-y divide-gray-50 border border-gray-100 overflow-hidden">
+                                    {transactions.length === 0 ? <div className="p-16 text-center text-gray-400">尚無交易紀錄</div> : transactions.map(t => (
+                                        <div key={t.id} className="flex items-center justify-between p-5 group hover:bg-gray-50 transition-colors">
                                             <div className="flex items-center gap-4">
-                                                <div className={`p-3 rounded-2xl ${t.type === 'income' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}><Icon name={t.type === 'income' ? 'TrendingUp' : 'TrendingDown'} /></div>
-                                                <div><p className="font-bold">{t.note || t.category}</p><p className="text-xs text-gray-400">{t.date} · {t.category}</p></div>
+                                                <div className={`p-3 rounded-2xl ${t.type === 'income' ? 'bg-green-100 text-green-600' : t.type === 'savings' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}`}><Icon name={t.type === 'income' ? 'TrendingUp' : t.type === 'savings' ? 'PiggyBank' : 'TrendingDown'} /></div>
+                                                <div><p className="font-bold text-gray-800">{t.note || t.category}</p><p className="text-xs text-gray-400">{t.date} · {t.category}</p></div>
                                             </div>
                                             <div className="flex items-center gap-4">
-                                                <span className="font-black">${t.amount.toLocaleString()}</span>
-                                                <button onClick={()=>db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('transactions').doc(t.id).delete()} className="text-gray-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Icon name="Trash2" className="w-4 h-4" /></button>
+                                                <span className={`font-black ${t.type === 'income' ? 'text-green-600' : 'text-gray-800'}`}>${t.amount.toLocaleString()}</span>
+                                                <button onClick={()=>handleDeleteTrans(t.id)} className="text-gray-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-2"><Icon name="Trash2" className="w-4 h-4" /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -276,90 +286,87 @@
                         {activeTab === 'installments' && (
                             <div className="animate-in space-y-5">
                                 <div className="flex justify-between items-center px-2">
-                                    <h3 className="font-black text-xl">分期項目</h3>
-                                    <button onClick={()=>setShowInstModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-2xl text-xs font-bold shadow-lg">新增分期</button>
+                                    <h3 className="font-black text-xl">分期付款清單</h3>
+                                    <button onClick={()=>setShowInstModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-2xl text-xs font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition">新增分期</button>
                                 </div>
-                                {installments.map(inst => (
-                                    <div key={inst.id} className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100 group">
-                                        <div className="flex justify-between mb-4">
-                                            <div><h4 className="font-black text-lg">{inst.name}</h4><p className="text-[10px] text-gray-400 font-bold uppercase">起始: {inst.startDate}</p></div>
-                                            <button onClick={()=>db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('installments').doc(inst.id).delete()} className="text-gray-100 group-hover:text-red-300"><Icon name="Trash2" className="w-4 h-4" /></button>
+                                {installments.length === 0 ? <div className="p-16 text-center text-gray-400 border-2 border-dashed border-gray-200 rounded-[2.5rem]">目前沒有追蹤中的分期項目</div> : 
+                                    installments.map(inst => (
+                                        <div key={inst.id} className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100 group transition-all hover:shadow-md">
+                                            <div className="flex justify-between mb-4">
+                                                <div><h4 className="font-black text-lg text-gray-800">{inst.name}</h4><p className="text-[10px] text-gray-400 font-bold uppercase">起始日: {inst.startDate}</p></div>
+                                                <button onClick={()=>handleDeleteInst(inst.id)} className="text-gray-200 group-hover:text-red-300 transition-colors"><Icon name="Trash2" className="w-4 h-4" /></button>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-3 mb-6 text-center">
+                                                <div className="bg-indigo-50 p-4 rounded-3xl text-indigo-700 font-black"><p className="text-[9px] text-indigo-300 font-bold mb-1 uppercase">每月應繳</p>${inst.monthlyAmount.toLocaleString()}</div>
+                                                <div className="bg-gray-50 p-4 rounded-3xl text-gray-700 font-black text-center"><p className="text-[9px] text-gray-400 font-bold mb-1 uppercase">期數進度</p>{inst.totalPeriods - inst.remainingPeriods}/{inst.totalPeriods}</div>
+                                                <div className="bg-gray-50 p-4 rounded-3xl text-gray-700 font-black text-right"><p className="text-[9px] text-gray-400 font-bold mb-1 uppercase">剩餘欠款</p>${(inst.monthlyAmount * inst.remainingPeriods).toLocaleString()}</div>
+                                            </div>
+                                            <button disabled={inst.remainingPeriods <= 0} onClick={()=>payInst(inst)} className={`w-full py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition ${inst.remainingPeriods > 0 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100 hover:bg-indigo-700' : 'bg-gray-100 text-gray-400'}`}>
+                                                <Icon name="Calendar" /> {inst.remainingPeriods > 0 ? '確認繳納本期' : '項目已全數結清'}
+                                            </button>
                                         </div>
-                                        <div className="grid grid-cols-3 gap-3 mb-6 text-center">
-                                            <div className="bg-indigo-50 p-4 rounded-3xl text-indigo-700 font-black"><p className="text-[9px] text-indigo-300 mb-1">月繳</p>${inst.monthlyAmount.toLocaleString()}</div>
-                                            <div className="bg-gray-50 p-4 rounded-3xl text-gray-700 font-black"><p className="text-[9px] text-gray-400 mb-1">期數</p>{inst.remainingPeriods}/{inst.totalPeriods}</div>
-                                            <div className="bg-gray-50 p-4 rounded-3xl text-gray-700 font-black"><p className="text-[9px] text-gray-400 mb-1">欠額</p>${(inst.monthlyAmount * inst.remainingPeriods).toLocaleString()}</div>
-                                        </div>
-                                        <button disabled={inst.remainingPeriods <= 0} onClick={()=>payInst(inst)} className={`w-full py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition ${inst.remainingPeriods > 0 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100 hover:bg-indigo-700' : 'bg-gray-100 text-gray-400'}`}>
-                                            <Icon name="Calendar" /> {inst.remainingPeriods > 0 ? '繳納本期' : '已結清'}
-                                        </button>
-                                    </div>
-                                ))}
+                                    ))
+                                }
                             </div>
                         )}
                     </main>
 
-                    {/* Navbar */}
+                    {/* 底部 Navbar */}
                     <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t px-10 py-3 flex justify-around items-center z-20">
-                        <button onClick={()=>setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'text-indigo-600 scale-110' : 'text-gray-300'}`}><Icon name="PieChart" /><span className="text-[8px] font-black uppercase">總覽</span></button>
-                        <div className="relative -top-10"><button onClick={()=>setShowTransModal(true)} className="bg-indigo-600 text-white p-5 rounded-full shadow-2xl hover:scale-110 active:scale-95 transition-all"><Icon name="Plus" className="w-7 h-7" /></button></div>
-                        <button onClick={()=>setActiveTab('installments')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'installments' ? 'text-indigo-600 scale-110' : 'text-gray-300'}`}><Icon name="CreditCard" /><span className="text-[8px] font-black uppercase">分期</span></button>
+                        <button onClick={()=>setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'text-indigo-600 scale-110' : 'text-gray-300 hover:text-gray-500'}`}><Icon name="PieChart" /><span className="text-[8px] font-black uppercase tracking-tighter">總覽</span></button>
+                        <div className="relative -top-10"><button onClick={()=>setShowTransModal(true)} className="bg-indigo-600 text-white p-5 rounded-full shadow-2xl hover:scale-110 active:scale-90 transition-all shadow-indigo-200"><Icon name="Plus" className="w-7 h-7" /></button></div>
+                        <button onClick={()=>setActiveTab('installments')} className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'installments' ? 'text-indigo-600 scale-110' : 'text-gray-300 hover:text-gray-500'}`}><Icon name="CreditCard" /><span className="text-[8px] font-black uppercase tracking-tighter">分期</span></button>
                     </div>
 
-                    {/* Modal: Trans */}
+                    {/* 新增紀錄彈窗 */}
                     {showTransModal && (
                         <div className="fixed inset-0 bg-indigo-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 animate-in">
                             <div className="bg-white w-full max-w-md rounded-t-[2.5rem] sm:rounded-[2.5rem] p-8 shadow-2xl">
-                                <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-black text-gray-800">新增紀錄</h3><button onClick={()=>setShowTransModal(false)} className="text-gray-400">✕</button></div>
+                                <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-black text-gray-800">新增交易</h3><button onClick={()=>setShowTransModal(false)} className="bg-gray-100 p-2 rounded-full text-gray-400 hover:bg-gray-200 transition">✕</button></div>
                                 <form onSubmit={handleAddTrans} className="space-y-6">
                                     <div className="flex p-1.5 bg-gray-100 rounded-2xl">
                                         {['expense', 'income', 'savings'].map(t => (
-                                            <button key={t} type="button" onClick={()=>setNewTrans({...newTrans, type: t, category: t==='savings'?'儲蓄':newTrans.category})} className={`flex-1 py-2.5 rounded-xl text-xs font-black transition ${newTrans.type===t?'bg-white shadow text-indigo-600':'text-gray-400'}`}>
+                                            <button key={t} type="button" onClick={()=>setNewTrans({...newTrans, type: t, category: t==='savings'?'儲蓄':newTrans.category})} className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all ${newTrans.type===t?'bg-white shadow-md text-indigo-600':'text-gray-400'}`}>
                                                 {t==='expense'?'支出':t==='income'?'收入':'存款'}
                                             </button>
                                         ))}
                                     </div>
-                                    <div className="flex items-baseline gap-1"><span className="text-2xl font-black text-indigo-300">$</span><input type="number" value={newTrans.amount} onChange={e=>setNewTrans({...newTrans, amount:e.target.value})} className="w-full text-5xl font-black border-none bg-transparent p-0 focus:ring-0" placeholder="0" autoFocus required /></div>
+                                    <div className="flex items-baseline gap-1"><span className="text-2xl font-black text-indigo-300">$</span><input type="number" value={newTrans.amount} onChange={e=>setNewTrans({...newTrans, amount:e.target.value})} className="w-full text-5xl font-black border-none bg-transparent p-0 focus:ring-0 text-gray-800 placeholder-gray-100" placeholder="0" autoFocus required /></div>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <select value={newTrans.category} onChange={e=>setNewTrans({...newTrans, category:e.target.value})} className="bg-gray-50 border-none rounded-2xl p-4 font-bold text-sm">
-                                            {newTrans.type==='savings'?<option>儲蓄</option>:<><option>餐飲</option><option>交通</option><option>購物</option><option>娛樂</option><option>薪資</option><option>其他</option></>}
-                                        </select>
-                                        <input type="date" value={newTrans.date} onChange={e=>setNewTrans({...newTrans, date:e.target.value})} className="bg-gray-50 border-none rounded-2xl p-4 font-bold text-sm" />
+                                        <div className="space-y-1">
+                                            <p className="text-[10px] font-bold text-gray-400 uppercase ml-1">類別</p>
+                                            <select value={newTrans.category} onChange={e=>setNewTrans({...newTrans, category:e.target.value})} className="w-full bg-gray-50 border-none rounded-2xl p-4 font-bold text-sm focus:ring-2 focus:ring-indigo-100">
+                                                {newTrans.type==='savings'?<option>儲蓄</option>:<><option>餐飲</option><option>交通</option><option>購物</option><option>娛樂</option><option>薪資</option><option>其他</option></>}
+                                            </select>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <p className="text-[10px] font-bold text-gray-400 uppercase ml-1">日期</p>
+                                            <input type="date" value={newTrans.date} onChange={e=>setNewTrans({...newTrans, date:e.target.value})} className="w-full bg-gray-50 border-none rounded-2xl p-4 font-bold text-sm focus:ring-2 focus:ring-indigo-100" />
+                                        </div>
                                     </div>
-                                    <input type="text" value={newTrans.note} onChange={e=>setNewTrans({...newTrans, note:e.target.value})} placeholder="輸入備註..." className="w-full bg-gray-50 border-none rounded-2xl p-4 font-bold text-sm" />
-                                    <button type="submit" className="w-full bg-indigo-600 text-white py-5 rounded-3xl font-black shadow-xl">保存紀錄</button>
+                                    <input type="text" value={newTrans.note} onChange={e=>setNewTrans({...newTrans, note:e.target.value})} placeholder="新增描述紀錄..." className="w-full bg-gray-50 border-none rounded-2xl p-4 font-bold text-sm focus:ring-2 focus:ring-indigo-100" />
+                                    <button type="submit" className="w-full bg-indigo-600 text-white py-5 rounded-[1.5rem] font-black shadow-xl shadow-indigo-100 active:scale-95 transition-all">保存紀錄</button>
                                 </form>
                             </div>
                         </div>
                     )}
 
-                    {/* Modal: Inst */}
+                    {/* 新增分期彈窗 */}
                     {showInstModal && (
                         <div className="fixed inset-0 bg-indigo-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in">
                             <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl">
-                                <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-black">設定分期</h3><button onClick={()=>setShowInstModal(false)} className="text-gray-400">✕</button></div>
-                                <form onSubmit={e=>{
-                                    e.preventDefault();
-                                    db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('installments').add({
-                                        ...newInst, 
-                                        totalAmount: Number(newInst.totalAmount),
-                                        monthlyAmount: Number(newInst.monthlyAmount),
-                                        totalPeriods: Number(newInst.totalPeriods),
-                                        remainingPeriods: Number(newInst.remainingPeriods),
-                                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                                    });
-                                    setShowInstModal(false);
-                                }} className="space-y-4">
-                                    <input type="text" value={newInst.name} onChange={e=>setNewInst({...newInst, name:e.target.value})} placeholder="項目名稱" className="w-full bg-gray-50 border-none rounded-2xl p-4 font-bold" required />
+                                <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-black text-gray-800">設定分期付款</h3><button onClick={()=>setShowInstModal(false)} className="bg-gray-100 p-2 rounded-full text-gray-400 hover:bg-gray-200 transition">✕</button></div>
+                                <form onSubmit={handleAddInst} className="space-y-4">
+                                    <input type="text" value={newInst.name} onChange={e=>setNewInst({...newInst, name:e.target.value})} placeholder="項目名稱 (例如: iPhone)" className="w-full bg-gray-50 border-none rounded-2xl p-4 font-bold focus:ring-2 focus:ring-indigo-100" required />
                                     <div className="grid grid-cols-2 gap-4">
-                                        <input type="number" value={newInst.totalAmount} onChange={e=>setNewInst({...newInst, totalAmount:e.target.value})} placeholder="總額" className="bg-gray-50 border-none rounded-2xl p-4 font-bold" required />
-                                        <input type="number" value={newInst.monthlyAmount} onChange={e=>setNewInst({...newInst, monthlyAmount:e.target.value})} placeholder="月繳" className="bg-gray-50 border-none rounded-2xl p-4 font-bold" required />
+                                        <input type="number" value={newInst.totalAmount} onChange={e=>setNewInst({...newInst, totalAmount:e.target.value})} placeholder="總額" className="bg-gray-50 border-none rounded-2xl p-4 font-bold focus:ring-2 focus:ring-indigo-100" required />
+                                        <input type="number" value={newInst.monthlyAmount} onChange={e=>setNewInst({...newInst, monthlyAmount:e.target.value})} placeholder="每月應繳" className="bg-gray-50 border-none rounded-2xl p-4 font-bold focus:ring-2 focus:ring-indigo-100" required />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <input type="number" value={newInst.totalPeriods} onChange={e=>setNewInst({...newInst, totalPeriods:e.target.value})} placeholder="總期數" className="bg-gray-50 border-none rounded-2xl p-4 font-bold" required />
-                                        <input type="number" value={newInst.remainingPeriods} onChange={e=>setNewInst({...newInst, remainingPeriods:e.target.value})} placeholder="剩餘期數" className="bg-gray-50 border-none rounded-2xl p-4 font-bold" required />
+                                        <input type="number" value={newInst.totalPeriods} onChange={e=>setNewInst({...newInst, totalPeriods:e.target.value})} placeholder="總期數" className="bg-gray-50 border-none rounded-2xl p-4 font-bold focus:ring-2 focus:ring-indigo-100" required />
+                                        <input type="number" value={newInst.remainingPeriods} onChange={e=>setNewInst({...newInst, remainingPeriods:e.target.value})} placeholder="剩餘期數" className="bg-gray-50 border-none rounded-2xl p-4 font-bold focus:ring-2 focus:ring-indigo-100" required />
                                     </div>
-                                    <button type="submit" className="w-full bg-orange-500 text-white py-5 rounded-3xl font-black shadow-xl">開始追蹤</button>
+                                    <button type="submit" className="w-full bg-orange-500 text-white py-5 rounded-[1.5rem] font-black shadow-xl shadow-orange-100 active:scale-95 transition-all">開始追蹤</button>
                                 </form>
                             </div>
                         </div>
